@@ -42,6 +42,9 @@ def terms(label, field, order_col, size=10, dtype="string"):
 
 
 def lens(oid, title, dv, vis_type, visualization, columns, query):
+    for c in columns.values():          # keep our labels instead of Lens auto-names ("Sum of data.received")
+        if c["operationType"] != "date_histogram":
+            c["customLabel"] = True
     state = {
         "visualization": visualization,
         "query": {"query": query, "language": "kuery"},

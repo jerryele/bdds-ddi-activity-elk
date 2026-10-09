@@ -58,6 +58,9 @@ def terms(label, field, order_col, size=10, dtype="string"):
 
 
 def lens(oid, title, dv, vis_type, visualization, columns, query):
+    for c in columns.values():          # keep our labels instead of Lens auto-names ("Sum of data.received")
+        if c["operationType"] != "date_histogram":
+            c["customLabel"] = True
     state = {
         "visualization": visualization,
         "query": {"query": query, "language": "kuery"},
@@ -179,9 +182,9 @@ DHCP = [
 
     (sum_chart("dhcpstat-x-v4io", "DHCPv4 packets received / sent", [("Received", "data.received"), ("Sent", "data.sent")],
                V4, kind="bar"), 0, 8, 24, 14),
-    (xy("dhcpstat-x-lps", "Leases per second", DHCP_STAT,
-        {"x": date_hist(), "p": terms("Protocol", "payloadType", "l", 2), "l": agg("average", "Leases/s", "data.leasesPerSecond")},
-        ["l"], split="p"), 24, 8, 24, 14),
+    (xy("dhcpstat-x-lps", "Leases per second (DHCPv4)", DHCP_STAT,
+        {"x": date_hist(), "l": agg("average", "Leases/s", "data.leasesPerSecond")},
+        ["l"], query=V4), 24, 8, 24, 14),
 
     (sum_chart("dhcpstat-x-dora", "DHCPv4 message flow (Discover / Offer / Request / ACK / NAK)",
                [("Discover", "data.discoverReceived"), ("Offer", "data.offerSent"), ("Request", "data.requestReceived"),
