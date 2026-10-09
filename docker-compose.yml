@@ -1,0 +1,106 @@
+name: ddi-activity
+# All environment-specific values come from .env (copy .env.example). HOST_IP is required.
+services:
+  kafka:
+    image: apache/kafka:${KAFKA_VERSION:-3.9.0}
+    container_name: kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://${HOST_IP:?set HOST_IP in .env}:${KAFKA_PORT:-9094}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: -Xms${KAFKA_HEAP:-1g} -Xmx${KAFKA_HEAP:-1g}
+    ports: ["${KAFKA_PORT:-9094}:9094"]
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null"]
+      interval: 10s
+      retries: 12
+
+  # Creates the four topics (Kafka auto-create is disabled, names must match what BDDS writes to).
+  kafka-init:
+    image: apache/kafka:${KAFKA_VERSION:-3.9.0}
+    depends_on: {kafka: {condition: service_healthy}}
+    restart: "no"
+    environment:
+      RETENTION_DAYS: ${RETENTION_DAYS:-7}
+    entrypoint: ["/bin/sh","-c"]
+    command:
+      - |
+        MS=$$(( RETENTION_DAYS * 86400000 ))
+        for t in activity-dns activity-dhcp statistics-dns statistics-dhcp; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+            --topic $$t --partitions 3 --replication-factor 1 --config retention.ms=$$MS
+        done
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION:-8.17.0}
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms${ES_HEAP:-3g} -Xmx${ES_HEAP:-3g}
+      bootstrap.memory_lock: "true"
+    ulimits: {memlock: {soft: -1, hard: -1}}
+    ports: ["127.0.0.1:9200:9200"]
+    volumes: [es-data:/usr/share/elasticsearch/data]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s localhost:9200/_cluster/health | grep -Eq '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      retries: 20
+
+  # One-shot: ILM policy (RETENTION_DAYS) + index template `ddi`.
+  es-setup:
+    image: curlimages/curl:8.11.1
+    depends_on: {elasticsearch: {condition: service_healthy}}
+    restart: "no"
+    environment:
+      RETENTION_DAYS: ${RETENTION_DAYS:-7}
+    volumes: ["./setup:/setup:ro"]
+    entrypoint: ["/bin/sh","/setup/setup.sh"]
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:${STACK_VERSION:-8.17.0}
+    container_name: logstash
+    restart: unless-stopped
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+      es-setup: {condition: service_completed_successfully}
+    environment:
+      LS_JAVA_OPTS: -Xms${LS_HEAP:-1g} -Xmx${LS_HEAP:-1g}
+      XPACK_MONITORING_ENABLED: "false"
+    volumes:
+      - ./logstash/pipelines:/usr/share/logstash/pipelines:ro
+      - ./logstash/pipelines.yml:/usr/share/logstash/config/pipelines.yml:ro
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION:-8.17.0}
+    container_name: kibana
+    restart: unless-stopped
+    depends_on: {elasticsearch: {condition: service_healthy}}
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports: ["${KIBANA_PORT:-5601}:5601"]
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka-ui
+    restart: unless-stopped
+    depends_on: {kafka: {condition: service_healthy}}
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ddi-activity
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "false"
+    ports: ["${KAFKA_UI_PORT:-8082}:8080"]
+
+volumes: {kafka-data: {}, es-data: {}}

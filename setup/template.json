@@ -1,0 +1,30 @@
+{
+  "index_patterns": ["activity-*", "statistics-*"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.lifecycle.name": "activity-7d",
+      "index.mapping.total_fields.limit": 3000
+    },
+    "mappings": {
+      "dynamic_templates": [
+        { "strings_as_keyword": { "match_mapping_type": "string", "mapping": { "type": "keyword", "ignore_above": 1024 } } }
+      ],
+      "properties": {
+        "source":      { "properties": { "ip": { "type": "ip" }, "port": { "type": "integer" } } },
+        "destination": { "properties": { "ip": { "type": "ip" }, "port": { "type": "integer" } } },
+        "dns": { "properties": {
+          "client_ip": { "type": "ip" }, "upstream_ip": { "type": "ip" }, "resolved_ips": { "type": "ip" },
+          "latency_ms": { "type": "float" }, "min_ttl": { "type": "long" }
+        } },
+        "dhcp": { "properties": {
+          "client_ip": { "type": "ip" }, "your_ip": { "type": "ip" }, "server_ip": { "type": "ip" },
+          "relay_ip": { "type": "ip" }, "requested_ip": { "type": "ip" }, "server_identifier": { "type": "ip" },
+          "dns_servers": { "type": "ip" }, "router": { "type": "ip" }, "ia_addrs": { "type": "ip" }
+        } }
+      }
+    }
+  }
+}
